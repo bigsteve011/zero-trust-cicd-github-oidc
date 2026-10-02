@@ -1,8 +1,8 @@
 name: Secure build, sign and deploy (OIDC)
 
+# Manual trigger so the template doesn't publish/sign images before it is configured.
+# Switch to `push: branches: [main]` once AWS_DEPLOY_ROLE_ARN and RELEASE_BUCKET are set.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Nothing is granted by default; each job asks only for what it needs.
@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan IaC for HIGH/CRITICAL misconfigurations
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: terraform

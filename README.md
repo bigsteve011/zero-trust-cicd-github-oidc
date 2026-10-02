@@ -34,7 +34,7 @@ app/                  tiny example workload to build and sign
 1. `cd terraform && cp terraform.tfvars.example terraform.tfvars` and fill in your org, repo and release bucket.
 2. `terraform init && terraform apply`
 3. In GitHub, create a protected **production** environment and set the variables `AWS_DEPLOY_ROLE_ARN` (from the Terraform output) and `RELEASE_BUCKET`.
-4. Push to `main`. No AWS access keys are stored anywhere: the job exchanges its OIDC token for 15-minute credentials.
+4. Run the **Secure build, sign and deploy** workflow from the Actions tab (switch its trigger to `push` once configured). No AWS access keys are stored anywhere: the job exchanges its OIDC token for 15-minute credentials.
 
 Verify an image yourself:
 ```bash
