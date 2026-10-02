@@ -1,0 +1,88 @@
+name: Secure build, sign and deploy (OIDC)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Nothing is granted by default; each job asks only for what it needs.
+permissions: {}
+
+jobs:
+  build-sign-deploy:
+    runs-on: ubuntu-latest
+    # The protected environment is part of the OIDC "sub" claim the AWS role trusts.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write   # request the GitHub OIDC token (used by AWS STS and Sigstore)
+      packages: write   # push the image to GHCR
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan IaC for HIGH/CRITICAL misconfigurations
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image and attach SBOM attestation (keyless)
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "$REF"
+          cosign attest --yes --type cyclonedx --predicate sbom.cdx.json "$REF"
+
+      - name: Verify signature before deploying
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify "$REF" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Assume AWS role with OIDC (no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-duration-seconds: 900
+
+      - name: Publish release manifest
+        env:
+          BUCKET: ${{ vars.RELEASE_BUCKET }}
+        run: |
+          jq -n --arg image "$IMAGE" --arg digest "${{ steps.build.outputs.digest }}" --arg sha "$GITHUB_SHA" \
+            '{image: $image, digest: $digest, commit: $sha}' > release.json
+          aws s3 cp release.json "s3://$BUCKET/releases/$GITHUB_SHA.json"
+          aws s3 cp sbom.cdx.json "s3://$BUCKET/releases/$GITHUB_SHA.sbom.cdx.json"

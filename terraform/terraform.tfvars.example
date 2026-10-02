@@ -1,0 +1,4 @@
+github_org          = "your-org"
+github_repo         = "core-infrastructure"
+allowed_environment = "production"
+deploy_bucket_arn   = "arn:aws:s3:::your-release-artifacts-bucket"
